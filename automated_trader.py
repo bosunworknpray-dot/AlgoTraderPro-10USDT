@@ -195,7 +195,7 @@ class AutomatedTrader:
         """Scan for signals and execute trades"""
         try:
             symbols = get_usdt_symbols(limit=100)
-            signals = generate_signals(symbols, interval="60", top_n=self.top_n_signals, trading_mode=trading_mode)
+            signals = generate_signals(symbols, interval="5", top_n=self.top_n_signals, trading_mode=trading_mode)
             self.stats["signals_generated"] += len(signals)
             
             # Get current positions count
@@ -212,10 +212,15 @@ class AutomatedTrader:
                     break
                 
                 # Risk check
-                position_size = self.engine.calculate_position_size(symbol, signal.get("entry", 0))
-                risk_amount = position_size * self.risk_per_trade
-                if risk_amount > self.engine.max_position_size:
-                    logger.warning(f"Risk too high for {symbol}: {risk_amount} > {self.engine.max_position_size}")
+                entry_price = signal.get("entry") or self.engine.client.get_current_price(symbol)
+                position_size = self.engine.calculate_position_size(symbol, entry_price)
+                if position_size <= 0:
+                    logger.warning(f"Calculated position size is zero for {symbol}, skipping")
+                    continue
+
+                position_value = position_size * entry_price
+                if position_value > self.engine.max_position_size:
+                    logger.warning(f"Position too large for {symbol}: {position_value:.2f} > {self.engine.max_position_size}")
                     continue
                 
                 # Convert signal to dict if needed

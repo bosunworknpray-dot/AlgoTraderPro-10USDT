@@ -26,7 +26,11 @@ class TradingEngine:
             self.max_position_size = self.settings.get("MAX_POSITION_SIZE", 10000.0)  # USDT
             self.max_open_positions = self.settings.get("MAX_OPEN_POSITIONS", 10)
             self.max_daily_loss = self.settings.get("MAX_DAILY_LOSS", 100.0)  # USDT
-            self.max_risk_per_trade = self.settings.get("MAX_RISK_PER_TRADE", 0.05)  # 5%
+            self.max_risk_per_trade = self.settings.get("MAX_RISK_PER_TRADE", self.settings.get("RISK_PCT", 0.10))
+            self.max_trade_equity_pct = self.settings.get("TRADE_EQUITY_PCT", self.settings.get("RISK_PCT", 0.10))
+            self.sl_margin_pct = self.settings.get("SL_MARGIN_PCT", 0.50)
+            self.tp_pct = self.settings.get("TP_PERCENT", 0.10)
+            self.sl_pct = self.settings.get("SL_PERCENT", 0.05)
             
             # Trading state management
             self._trading_enabled = True
@@ -174,8 +178,12 @@ class TradingEngine:
         try:
             self.settings.update(new_settings)
             # Update critical settings
-            self.max_risk_per_trade = new_settings.get("RISK_PCT", self.max_risk_per_trade)
+            self.max_risk_per_trade = new_settings.get("MAX_RISK_PER_TRADE", self.settings.get("MAX_RISK_PER_TRADE", self.max_risk_per_trade))
+            self.max_trade_equity_pct = self.settings.get("TRADE_EQUITY_PCT", self.max_trade_equity_pct)
             self.max_open_positions = new_settings.get("MAX_POSITIONS", self.max_open_positions)
+            self.tp_pct = self.settings.get("TP_PERCENT", self.tp_pct)
+            self.sl_pct = self.settings.get("SL_PERCENT", self.sl_pct)
+            self.max_position_size = self.settings.get("MAX_POSITION_SIZE", self.max_position_size)
             # Save to file
             with open("settings.json", "w") as f:
                 json.dump(self.settings, f, indent=2)
@@ -190,8 +198,12 @@ class TradingEngine:
         try:
             from settings import load_settings
             self.settings = load_settings()
-            self.max_risk_per_trade = self.settings.get("MAX_RISK_PER_TRADE", 0.05)
+            self.max_risk_per_trade = self.settings.get("MAX_RISK_PER_TRADE", self.settings.get("RISK_PCT", 0.10))
+            self.max_trade_equity_pct = self.settings.get("TRADE_EQUITY_PCT", self.settings.get("RISK_PCT", 0.10))
             self.max_open_positions = self.settings.get("MAX_OPEN_POSITIONS", 10)
+            self.tp_pct = self.settings.get("TP_PERCENT", 0.10)
+            self.sl_pct = self.settings.get("SL_PERCENT", 0.05)
+            self.max_position_size = self.settings.get("MAX_POSITION_SIZE", 10000.0)
             logger.info("Trading engine settings reloaded")
         except Exception as e:
             logger.error(f"Error reloading settings: {e}")
@@ -252,8 +264,9 @@ class TradingEngine:
             import math
 
             # --- Determine risk & leverage ---
-            risk_pct = risk_percent or self.settings.get("RISK_PCT", 0.01)
-            lev = leverage or self.settings.get("LEVERAGE", 15)
+            trade_equity_pct = risk_percent or self.settings.get("TRADE_EQUITY_PCT", self.settings.get("RISK_PCT", 0.10))
+            lev = leverage or self.settings.get("LEVERAGE", 10)
+            trade_equity_pct = min(max(trade_equity_pct, 0.01), 1.0)
 
             # --- Get wallet balance ---
             mode = "real" if self.db.get_setting("trading_mode") == "real" else "virtual"
@@ -267,9 +280,9 @@ class TradingEngine:
                 logger.warning(f"Cannot calculate position size for {symbol}: Available balance is {balance}")
                 return 0.0
 
-            # --- Risk-based position sizing ---
-            risk_amount = max(balance * risk_pct, 2.0)  # enforce at least $2 risk
-            position_value = risk_amount * lev
+            # --- Margin-based scalping sizing ---
+            margin_amount = max(balance * trade_equity_pct, 2.0)
+            position_value = margin_amount * lev
             position_size = position_value / entry_price
 
             # --- Symbol trading rules ---
@@ -315,6 +328,25 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Error calculating position size for {symbol}: {e}", exc_info=True)
             return 0.0
+
+    def _calculate_sl_tp(self, entry_price: float, side: str, leverage: Optional[int] = None) -> tuple[float, float]:
+        """Scalping stop-loss and take-profit calculation."""
+        try:
+            side = side.title()
+            sl_percent = self.sl_pct if self.sl_pct is not None else self.settings.get("SL_PERCENT", 0.05)
+            tp_percent = self.tp_pct if self.tp_pct is not None else self.settings.get("TP_PERCENT", 0.10)
+
+            if side == "Buy":
+                stop_loss = round(entry_price * (1 - sl_percent), 6)
+                take_profit = round(entry_price * (1 + tp_percent), 6)
+            else:
+                stop_loss = round(entry_price * (1 + sl_percent), 6)
+                take_profit = round(entry_price * (1 - tp_percent), 6)
+
+            return stop_loss, take_profit
+        except Exception as e:
+            logger.error(f"Error calculating SL/TP for {side} {entry_price}: {e}")
+            return 0.0, 0.0
 
     def calculate_virtual_pnl(self, trade: Dict) -> float:
         """Calculate unrealized PnL for virtual trades"""
@@ -719,26 +751,11 @@ class TradingEngine:
                     logger.error(f"Invalid entry price for {symbol}")
                     continue
 
-                # Use signal's sl/tp if available, else calculate (aligned with signal_generator's logic)
+                # Use signal's sl/tp if available, else calculate scalar scalping values
                 stop_loss = signal.get("sl")
                 take_profit = signal.get("tp")
                 if stop_loss is None or take_profit is None:
-                    vol = signal.get("indicators", {}).get("volatility", 0)
-                    sl_percent = 0.08
-                    tp_percent = 0.40
-                    if vol > 3:
-                        sl_percent = 0.12
-                        tp_percent = 0.50
-                    elif vol < 1:
-                        sl_percent = 0.05
-                        tp_percent = 0.25
-
-                    if side == "Buy":
-                        stop_loss = round(entry_price * (1 - sl_percent), 4)
-                        take_profit = round(entry_price * (1 + tp_percent), 4)
-                    else:  # Sell
-                        stop_loss = round(entry_price * (1 + sl_percent), 4)
-                        take_profit = round(entry_price * (1 - tp_percent), 4)
+                    stop_loss, take_profit = self._calculate_sl_tp(entry_price, side, signal.get("leverage", 15))
 
                 # Calculate position size with symbol info for precision
                 position_size = self.calculate_position_size(symbol, entry_price)
@@ -768,13 +785,19 @@ class TradingEngine:
                     logger.warning(f"Max position size ({self.max_position_size} USDT) exceeded. Skipping trade for {symbol}")
                     continue
 
-                # Place main order without SL/TP
+                stop_loss = signal.get("sl")
+                take_profit = signal.get("tp")
+                if stop_loss is None or take_profit is None:
+                    stop_loss, take_profit = self._calculate_sl_tp(entry_price, side, signal.get("leverage", 15))
+
                 order_response = await self.client.place_order(
                     symbol=symbol,
                     side=side,
                     qty=position_size,
                     leverage=signal.get("leverage", 15),
-                    mode=signal.get("margin_mode", "CROSS")
+                    mode=signal.get("margin_mode", "CROSS"),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit
                 )
 
                 if "error" in order_response or not order_response.get("order_id"):
@@ -787,37 +810,9 @@ class TradingEngine:
 
                 order_id = order_response.get("order_id")
 
-                # Place stop-loss order if provided
-                if stop_loss:
-                    sl_side = "Sell" if side == "Buy" else "Buy"
-                    sl_response = await self.client.place_conditional_order(
-                        symbol=symbol,
-                        side=sl_side,
-                        qty=position_size,
-                        trigger_price=stop_loss,
-                        order_type="Market",
-                        stop_loss=True
-                    )
-                    if "error" in sl_response or not sl_response.get("order_id"):
-                        logger.warning(f"Failed to place stop-loss for {symbol}: {sl_response.get('error', 'Unknown error')}")
-                    else:
-                        logger.info(f"Stop-loss placed for {symbol}: {stop_loss}")
-
-                # Place take-profit order if provided
-                if take_profit:
-                    tp_side = "Sell" if side == "Buy" else "Buy"
-                    tp_response = await self.client.place_conditional_order(
-                        symbol=symbol,
-                        side=tp_side,
-                        qty=position_size,
-                        trigger_price=take_profit,
-                        order_type="Market",
-                        take_profit=True
-                    )
-                    if "error" in tp_response or not tp_response.get("order_id"):
-                        logger.warning(f"Failed to place take-profit for {symbol}: {tp_response.get('error', 'Unknown error')}")
-                    else:
-                        logger.info(f"Take-profit placed for {symbol}: {take_profit}")
+                # If TP/SL already attached through place_order, skip manual conditional orders
+                stop_loss = order_response.get("stopLoss", stop_loss)
+                take_profit = order_response.get("takeProfit", take_profit)
 
                 # Prepare trade data with used sl/tp
                 trade_data = {

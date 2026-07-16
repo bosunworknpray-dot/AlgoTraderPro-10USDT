@@ -382,7 +382,7 @@ def main():
                 st.markdown("### ⏱️ Timing Settings")
                 scan_interval = st.number_input(
                     "Scan Interval (minutes)",
-                    min_value=15.0,
+                    min_value=5.0,
                     max_value=1440.0,
                     value=float(current_settings.get("SCAN_INTERVAL", 3600) // 60),
                     help="How often to scan for new signals"

@@ -10,20 +10,21 @@ logger = get_logger(__name__)
 
 def load_settings() -> Dict[str, Any]:
     default_settings = {
-        "SCAN_INTERVAL": int(os.getenv("DEFAULT_SCAN_INTERVAL", 3600)),
+        "SCAN_INTERVAL": int(os.getenv("DEFAULT_SCAN_INTERVAL", 300)),
         "TOP_N_SIGNALS": int(os.getenv("DEFAULT_TOP_N_SIGNALS", 5)),
         "MAX_LOSS_PCT": -15.0,
-        "TP_PERCENT": 0.5,
-        "SL_PERCENT": 0.1,
+        "TP_PERCENT": 10.0,
+        "SL_PERCENT": 5.0,
         "MAX_DRAWDOWN_PCT": -15.0,
-        "LEVERAGE": float(os.getenv("LEVERAGE", 15)),
-        "RISK_PCT": float(os.getenv("RISK_PCT", 0.01)),
+        "LEVERAGE": float(os.getenv("LEVERAGE", 10)),
+        "RISK_PCT": float(os.getenv("RISK_PCT", 0.10)),
         "VIRTUAL_BALANCE": 100.0,
         "ENTRY_BUFFER_PCT": float(os.getenv("ENTRY_BUFFER_PCT", 0.002)),
-        "SYMBOLS": ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "AVAXUSDT"],
-        "USE_WEBSOCKET": True,
+        "MAX_POSITION_SIZE": 10000.0,
         "MAX_POSITIONS": 5,
-        "MIN_SIGNAL_SCORE": 60
+        "MIN_SIGNAL_SCORE": 60,
+        "SYMBOLS": ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "AVAXUSDT"],
+        "USE_WEBSOCKET": True
     }
 
     try:

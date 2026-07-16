@@ -11,15 +11,15 @@ from datetime import datetime, timedelta, timezone
 from logging_config import get_logger
 logger = get_logger(__name__)
 
-# === CONFIGURATION - Same as your working script ===
-INTERVALS = ['15', '60', '240']
+# === CONFIGURATION - Scalping defaults ===
+INTERVALS = ['5', '15']
 MAX_SYMBOLS = 100
 MIN_VOLUME = 1000
 MIN_ATR_PCT = 0.001
 RSI_ZONE = (20, 80)
 ACCOUNT_BALANCE = 100
-RISK_PCT = 0.015
-LEVERAGE = 20
+RISK_PCT = 0.10
+LEVERAGE = 10
 ENTRY_BUFFER_PCT = 0.002
 
 tz_utc3 = timezone(timedelta(hours=3))
@@ -337,8 +337,8 @@ def analyze_symbol_multi_tf(symbol: str) -> Optional[Dict[str, Any]]:
         entry = min(cands, key=lambda x: abs(x - price))
         bb_slope = "Up" if price > p60['bb_u'] else "Down" if price < p60['bb_l'] else "Neutral"
 
-        tp = round(entry * (1.015 if side=="LONG" else 0.985), 6)
-        sl = round(entry * (0.985 if side=="LONG" else 1.015), 6)
+        tp = round(entry * (1.10 if side=="LONG" else 0.90), 6)
+        sl = round(entry * (0.95 if side=="LONG" else 1.05), 6)
         trail = round(entry * (1-ENTRY_BUFFER_PCT if side=="LONG" else 1+ENTRY_BUFFER_PCT), 6)
         liq = round(entry * (1 - 1/LEVERAGE if side=="LONG" else 1 + 1/LEVERAGE), 6)
 
